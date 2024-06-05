@@ -11,7 +11,9 @@ import string
 import time
 import concurrent.futures
 import pandas as pd
+import os
 
+RECEIVE_TIME_LIMIT = 60
 # 配置
 SMTP_USER = "icplfinalproject@gmail.com"
 SMTP_PASSWORD = "suyp ldja vkvr rluf"
@@ -19,10 +21,23 @@ SMTP_SERVER = "smtp.gmail.com"
 IMAP_SERVER = "imap.gmail.com"
 
 # 已知學生列表
-known_students = pd.read_excel("known_students_test.xlsx")
+file_path = "known_students_test.xlsx"
+if not os.path.exists(file_path):
+    raise FileNotFoundError(f"{file_path} not found. Please check the file path.")
+known_students_df = pd.read_excel(file_path)
+known_students = list(known_students_df["Email"])
 
-# 設置接收時間限制為3分鐘
-RECEIVE_TIME_LIMIT = 180
+# 初始化 Excel 文件
+attendance_file = "Attendance.xlsx"
+if not os.path.exists(attendance_file):
+    def init_excel(file_path):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Attendance"
+        sheet.append(["Email", "Number", "Date", "Status"])
+        workbook.save(file_path)
+
+    init_excel(attendance_file)
 
 # 生成隨機6位包含數字和大小寫字母的密碼
 def generate_password(length=6):
@@ -47,9 +62,9 @@ def send_attendance_email(student_email, course_name):
     server.quit()
 
 # 發送點名成功的郵件
-def send_success_email(student_email):
+def send_success_email(student_email, status):
     subject = "Attendance Confirmation"
-    body = "Your attendance code is correct. You are marked as present."
+    body = f"Your attendance code is correct. You are marked as {status}."
 
     msg = MIMEMultipart()
     msg["From"] = SMTP_USER
@@ -133,14 +148,16 @@ def check_email():
 def process_attendance_response(email_from, email_body):
     print(f"收到來自 {email_from} 的郵件，內容為：{email_body}")  # 調試用日誌
 
-    if email_from in known_students["Email"]:
+    if email_from in known_students:
         if email_body in valid_codes:
             print(f"密碼正確：{email_body}")  # 調試用日誌
             if email_from in incorrect_attempts:
                 record_attendance(email_from, "Late")
+                status = "Late"
             else:
                 record_attendance(email_from, "Present")
-            send_success_email(email_from)
+                status = "Present"
+            send_success_email(email_from, status)
             valid_codes.remove(email_body)
             responded_students.add(email_from)
             correct_students.add(email_from)
@@ -151,11 +168,11 @@ def process_attendance_response(email_from, email_body):
                 send_error_email(email_from, is_final=True)
                 responded_students.add(email_from)
             else:
-                incorrect_attempts.add(email_from)
                 send_error_email(email_from)
+                incorrect_attempts.add(email_from)
     else:
+        print(f"未知的郵件地址：{email_from}")
         record_attendance(email_from, "Invalid Email")
-
 
 # 使用 Excel 記錄出席情況
 def init_excel(file_path):
@@ -166,19 +183,19 @@ def init_excel(file_path):
     workbook.save(file_path)
 
 def record_attendance(email, status):
-    file_path = "attendance.xlsx"
+    file_path = attendance_file
     workbook = openpyxl.load_workbook(file_path)
     sheet = workbook.active
-    if email in known_students["Email"]:
-        row_number = known_students.index[known_students['Email'] == email]
-        name = known_students.iloc[row_number, 0 ].values[0]
+    if email in known_students:
+        row_number = known_students.index(email)
+        name = known_students_df.iloc[row_number]["Number"]
     else:
         name = "Unknown"
     sheet.append([email, name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), status])
     workbook.save(file_path)
 
 # 初始化 Excel 文件
-init_excel("attendance.xlsx")
+init_excel("Attendance.xlsx")
 
 # 計時任務
 def timed_check_email():
@@ -187,27 +204,24 @@ def timed_check_email():
         check_email()
         time.sleep(2)  # 每2秒檢查一次郵件
 
-# 存儲生成的點名密碼的集合
+# 初始化必需的集合
 valid_codes = set(generate_password() for _ in range(len(known_students)))
 print(f"生成的點名密碼：{valid_codes}")  # 調試用日誌
-# 記錄已回覆錯誤的學生
 incorrect_attempts = set()
-# 記錄已回覆的學生
 responded_students = set()
-# 記錄已回復正確密碼的學生
 correct_students = set()
 
 # 並行發送初始點名郵件
 with concurrent.futures.ThreadPoolExecutor() as executor:
-    futures = [executor.submit(send_attendance_email, student_email, "Python Class") for student_email in known_students["Email"]]
+    futures = [executor.submit(send_attendance_email, student_email, "Python Class") for student_email in known_students]
     concurrent.futures.wait(futures)
 
 # 定期檢查郵件
 timed_check_email()
 
 # 記錄未回覆正確密碼的學生為缺席
-for student_email in known_students["Email"]:
-    if student_email not in correct_students:
+for student_email in known_students:
+    if student_email not in responded_students:
         record_attendance(student_email, "Absent")
         send_absent_email(student_email)
 
