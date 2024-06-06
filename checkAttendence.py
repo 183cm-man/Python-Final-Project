@@ -13,7 +13,7 @@ import concurrent.futures
 import pandas as pd
 import os
 
-RECEIVE_TIME_LIMIT = 60
+RECEIVE_TIME_LIMIT = 60*3
 # 配置
 SMTP_USER = "icplfinalproject@gmail.com"
 SMTP_PASSWORD = "suyp ldja vkvr rluf"
