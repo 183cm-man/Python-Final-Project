@@ -21,23 +21,26 @@ SMTP_SERVER = "smtp.gmail.com"
 IMAP_SERVER = "imap.gmail.com"
 
 # 已知學生列表
-file_path = "known_students_test.xlsx"
+file_path = "known_students.xlsx"
 if not os.path.exists(file_path):
     raise FileNotFoundError(f"{file_path} not found. Please check the file path.")
 known_students_df = pd.read_excel(file_path)
 known_students = list(known_students_df["Email"])
 
-# 初始化 Excel 文件
+
+# 定義初始化Excel文件的函數
+def init_excel(file_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Attendance"
+    sheet.append(["Email", "Number", "Date", "Status"])
+    workbook.save(file_path)
+
+# 檢查並初始化出席記錄文件
 attendance_file = "Attendance.xlsx"
 if not os.path.exists(attendance_file):
-    def init_excel(file_path):
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "Attendance"
-        sheet.append(["Email", "Number", "Date", "Status"])
-        workbook.save(file_path)
-
     init_excel(attendance_file)
+
 
 # 生成隨機6位包含數字和大小寫字母的密碼
 def generate_password(length=6):
@@ -151,36 +154,44 @@ def process_attendance_response(email_from, email_body):
     if email_from in known_students:
         if email_body in valid_codes:
             print(f"密碼正確：{email_body}")  # 調試用日誌
-            if email_from in incorrect_attempts:
+            if email_from in incorrect_attempts_once:
                 record_attendance(email_from, "Late")
                 status = "Late"
+                LateList.add(email_from)
+                incorrect_attempts_once.remove(email_from)
+                
             else:
                 record_attendance(email_from, "Present")
                 status = "Present"
+                used_codes.add(email_body)
+                PresentList.add(email_from)
+
             send_success_email(email_from, status)
             valid_codes.remove(email_body)
             responded_students.add(email_from)
-            correct_students.add(email_from)
+           
         else:
-            print(f"密碼錯誤：{email_body}")  # 調試用日誌
-            if email_from in incorrect_attempts:
+            
+            if email_body in used_codes : 
+                print(f"密碼已使用過：{email_body} ")  
+            else :
+                print(f"密碼錯誤：{email_body} ")
+
+            if email_from in incorrect_attempts_once :
                 record_attendance(email_from, "Absent")
                 send_error_email(email_from, is_final=True)
-                responded_students.add(email_from)
-            else:
+                incorrect_attempts_twice.add(email_from)
+                incorrect_attempts_once.remove(email_from)
+            else :
                 send_error_email(email_from)
-                incorrect_attempts.add(email_from)
+                incorrect_attempts_once.add(email_from)
+
+            responded_students.add(email_from)
     else:
         print(f"未知的郵件地址：{email_from}")
         record_attendance(email_from, "Invalid Email")
 
-# 使用 Excel 記錄出席情況
-def init_excel(file_path):
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Attendance"
-    sheet.append(["Email", "Number", "Date", "Status"])
-    workbook.save(file_path)
+
 
 def record_attendance(email, status):
     file_path = attendance_file
@@ -207,9 +218,15 @@ def timed_check_email():
 # 初始化必需的集合
 valid_codes = set(generate_password() for _ in range(len(known_students)))
 print(f"生成的點名密碼：{valid_codes}")  # 調試用日誌
-incorrect_attempts = set()
+used_codes = set()
+incorrect_attempts_once = set()
+incorrect_attempts_twice = set()
 responded_students = set()
-correct_students = set()
+
+
+PresentList = set()
+LateList = set()
+noResponsedList = set()
 
 # 並行發送初始點名郵件
 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -219,10 +236,24 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
 # 定期檢查郵件
 timed_check_email()
 
+
 # 記錄未回覆正確密碼的學生為缺席
 for student_email in known_students:
     if student_email not in responded_students:
         record_attendance(student_email, "Absent")
         send_absent_email(student_email)
+        noResponsedList.add(student_email)
+    elif student_email in incorrect_attempts_once :
+        record_attendance(student_email, "Absent")
+        send_absent_email(student_email)
+        
 
+
+print ("-------點名結束-------")
+print ("出席：" + str(list(PresentList)))
+print ("遲到：" + str(list(LateList)))
+print ("缺席(兩次密碼錯誤）：" + str(list(incorrect_attempts_twice)))
+print ("缺席（輸入過一次錯誤密碼而未回覆第二次）：" + str(list(incorrect_attempts_once)))
+print ("缺席（從未回覆）：" + str(list(noResponsedList)))
+print ("出席結果已儲存在 Attendance.xlsx ")
 
