@@ -1,0 +1,6 @@
+smtplib
+imaplib
+email
+openpyxl
+pandas
+concurrent.futures
